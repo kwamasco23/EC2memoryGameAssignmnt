@@ -1,0 +1,83 @@
+---
+- name: Deploy Memory Card Game to EC2
+  hosts: webservers
+  become: yes
+  vars:
+    app_dir: /var/www/memory-game
+    nginx_conf_path: /etc/nginx/conf.d/memory-game.conf
+
+  tasks:
+    - name: Update apt cache
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+
+    - name: Install required packages
+      yum:
+        name:
+          - nginx
+          - git
+          - nodejs
+          - npm
+        state: present
+
+    - name: Start and enable Nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+      name: Remove existing memory-game directory
+      file:
+       path: /var/www/memory-game
+       state: absent
+
+
+    - name: Clone the application repository from GitHub
+      git:
+        repo: https://github.com/GyeeTech/devops-memory-game-assignment.git
+        dest: "{{ app_dir }}"
+        version: main
+      become_user: ec2-user
+
+    - name: Install npm dependencies
+      npm:
+        path: "{{ app_dir }}"
+        state: present
+      become_user: ec2-user
+
+    - name: Build the React application
+      command: npm run build
+      args:
+        chdir: "{{ app_dir }}"
+      become_user: ec2-user
+
+    - name: Configure Nginx
+      template:
+        src: "{{ playbook_dir }}/templates/nginx.conf.j2"
+        dest: "{{ nginx_conf_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart Nginx
+
+
+    - name: Ensure SELinux permissions
+      command: "chcon -Rt httpd_sys_content_t {{ app_dir }}/dist"
+      ignore_errors: yes
+
+  handlers:
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+
